@@ -421,6 +421,10 @@ class ServerOptions(Options):
                  "a:", "minfds=", int, default=1024)
         self.add("minprocs", "supervisord.minprocs",
                  "", "minprocs=", int, default=200)
+
+        self.add("stacksize", "supervisord.stacksize",
+                 "", "stacksize=", int, default=10 *1024**2)
+
         self.add("nocleanup", "supervisord.nocleanup",
                  "k", "nocleanup", flag=1, default=0)
         self.add("strip_ansi", "supervisord.strip_ansi",
@@ -552,6 +556,8 @@ class ServerOptions(Options):
         get = parser.getdefault
         section.minfds = integer(get('minfds', 1024))
         section.minprocs = integer(get('minprocs', 200))
+        section.stacksize = integer(get('stacksize', 10 * 1024000))
+
 
         directory = get('directory', None)
         if directory is None:
@@ -789,6 +795,9 @@ class ServerOptions(Options):
         numprocs = integer(get(section, 'numprocs', 1))
         numprocs_start = integer(get(section, 'numprocs_start', 0))
         process_name = get(section, 'process_name', '%(program_name)s')
+        minprocs = integer(get(section, 'minprocs', 4096))
+        minfds = integer(get(section, 'minfds', 4096))
+        stacksize = integer(get(section, 'stacksize', 10 * 1024000))
         environment_str = get(section, 'environment', '')
         stdout_cmaxbytes = byte_size(get(section,'stdout_capture_maxbytes','0'))
         stdout_events = boolean(get(section, 'stdout_events_enabled','false'))
@@ -874,6 +883,9 @@ class ServerOptions(Options):
                 priority=priority,
                 autostart=autostart,
                 autorestart=autorestart,
+                stacksize=stacksize,
+                minprocs=minprocs,
+                minfds=minfds,
                 startsecs=startsecs,
                 startretries=startretries,
                 uid=uid,
@@ -1273,6 +1285,19 @@ class ServerOptions(Options):
                 'name':'RLIMIT_NPROC',
                 })
 
+        if hasattr(resource, 'RLIMIT_STACK'):
+            limits.append(
+                {
+                'msg':('The maximum stack size in bytes'
+                       'to run this program is %(min)s as per the "stacksize" '
+                       'command-line argument or config file setting. '
+                       'The current environment will only allow you '
+                       'to allocate %(hard)s bytes for stack.'),
+                'min':self.stacksize,
+                'resource':resource.RLIMIT_STACK,
+                'name':'RLIMIT_STACK',
+                })
+
         msgs = []
 
         for limit in limits:
@@ -1296,6 +1321,16 @@ class ServerOptions(Options):
                                 locals())
                 except (resource.error, ValueError):
                     self.usage(msg % locals())
+
+            if (soft > min) or (soft == -1): # -1 means unlimited 
+                try:
+                    resource.setrlimit(res, (min, min))
+                    msgs.append('Lowered %(name)s limit to %(min)s' %
+                                locals())
+                except (resource.error, ValueError):
+                    self.usage(msg % locals())
+  
+
         return msgs
 
     def make_logger(self, critical_messages, warn_messages, info_messages):
@@ -1623,6 +1658,7 @@ class ProcessConfig(Config):
         'stderr_logfile', 'stderr_capture_maxbytes',
         'stderr_logfile_backups', 'stderr_logfile_maxbytes',
         'stderr_events_enabled',
+        'minprocs', 'minfds', 'stacksize',
         'stopsignal', 'stopwaitsecs', 'stopasgroup', 'killasgroup',
         'exitcodes', 'redirect_stderr' ]
     optional_param_names = [ 'environment', 'serverurl' ]
